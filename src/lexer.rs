@@ -1,7 +1,7 @@
 use chars::PeekableCharIndices;
 use result::{Span, CompileResult};
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TokenKind {
     KIf,
     KElse,
@@ -40,11 +40,13 @@ pub enum TokenKind {
     Ident(String),
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct Token {
     pub kind: TokenKind,
     pub span: Span,
 }
 
+#[derive(Debug)]
 pub struct Lexer<'a> {
     iter: PeekableCharIndices<'a>,
     src: &'a str,
@@ -146,10 +148,10 @@ impl<'a> Lexer<'a> {
                     if ch.is_alphanumeric() || ch == '_' {
                         self.iter.next();
                     } else {
-                        span.end = pos as u32;
                         break;
                     }
                 }
+                span.end = self.iter.offset() as u32;
 
                 match span.as_str(self.src) {
                     "if" => KIf,
@@ -214,5 +216,54 @@ impl<'a> Lexer<'a> {
         } else {
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use lexer::{ Lexer, TokenKind, Token };
+    use result::CompileResult;
+
+    fn expect_kind(l: &mut Lexer, expected: TokenKind) {
+        if let Ok(Some(Token { kind, span })) = l.next() {
+            if kind != expected {
+                panic!("Expected {:?} == {:?} (span: {:?})", kind, expected, span);
+            }
+            assert_eq!(kind, expected);
+        } else {
+            unreachable!();
+        }
+    }
+
+    #[test]
+    fn test_whitespace() {
+        let mut l = Lexer::new(" \n\t\r");
+        assert_eq!(l.peek(), Ok(None));
+        assert_eq!(l.next(), Ok(None));
+    }
+
+    #[test]
+    fn test_identifiers() {
+        let ref mut l = Lexer::new("if else let true false print while foo");
+        expect_kind(l, TokenKind::KIf);
+        expect_kind(l, TokenKind::KElse);
+        expect_kind(l, TokenKind::KLet);
+        expect_kind(l, TokenKind::KTrue);
+        expect_kind(l, TokenKind::KFalse);
+        expect_kind(l, TokenKind::KPrint);
+        expect_kind(l, TokenKind::KWhile);
+        expect_kind(l, TokenKind::Ident("foo".into()));
+        assert_eq!(l.next(), Ok(None));
+    }
+
+    #[test]
+    fn test_operators() {
+        let ref mut l = Lexer::new("*//\n+[]hello");
+        expect_kind(l, TokenKind::Multiply);
+        expect_kind(l, TokenKind::Add);
+        expect_kind(l, TokenKind::LBracket);
+        expect_kind(l, TokenKind::RBracket);
+        expect_kind(l, TokenKind::Ident("hello".into()));
+        assert_eq!(l.next(), Ok(None));
     }
 }

@@ -1,5 +1,6 @@
 use std::str::Chars;
 
+#[derive(Debug)]
 pub struct PeekableCharIndices<'a> {
     front: *const u8,
     iter: Chars<'a>,

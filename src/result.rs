@@ -1,5 +1,6 @@
 pub type CompileResult<T> = Result<T, Error>;
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct Span {
     pub start: u32,
     pub end: u32,
@@ -18,6 +19,7 @@ impl Span {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct Error {
     pub span: Span,
     pub msg: String,
