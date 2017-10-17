@@ -144,7 +144,7 @@ impl<'a> Lexer<'a> {
             }
 
             'a'...'z' | 'A'...'Z' | '_' => {
-                while let Some((pos, ch)) = self.iter.peek() {
+                while let Some((_, ch)) = self.iter.peek() {
                     if ch.is_alphanumeric() || ch == '_' {
                         self.iter.next();
                     } else {
@@ -216,6 +216,10 @@ impl<'a> Lexer<'a> {
         } else {
             false
         }
+    }
+
+    pub fn offset(&self) -> usize {
+        self.iter.offset()
     }
 }
 
