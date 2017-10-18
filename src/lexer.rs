@@ -1,7 +1,7 @@
 use chars::PeekableCharIndices;
 use result::{Span, CompileResult};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TokenKind {
     // Keywords
     KIf,
@@ -40,9 +40,11 @@ pub enum TokenKind {
     Comma,
 
     Ident(String),
+    Int(i32),
+    Float(f32),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub struct Token {
     pub kind: TokenKind,
     pub span: Span,
@@ -152,6 +154,28 @@ impl<'a> Lexer<'a> {
                     NotEq
                 } else {
                     return err!(span, "invalid character '!'");
+                }
+            }
+
+            '0'...'9' => {
+                while let Some((_, ch)) = self.iter.peek() {
+                    match ch {
+                        '0'...'9' => { self.iter.next(); }
+                        _ => break
+                    }
+                }
+                if let Some((_, '.')) = self.iter.peek() {
+                    while let Some((_, ch)) = self.iter.peek() {
+                        match ch {
+                            '0'...'9' => { self.iter.next(); }
+                            _ => break
+                        }
+                    }
+                    span.end = self.iter.offset() as u32;
+                    Float(span.as_str(self.src).parse().unwrap())
+                } else {
+                    span.end = self.iter.offset() as u32;
+                    Int(span.as_str(self.src).parse().unwrap())
                 }
             }
 

@@ -71,6 +71,8 @@ fn null_constant(p: &mut Parser, token: Token, _bp: i32) -> CompileResult<ExprRe
         TokenKind::KTrue => Atom::Bool(true),
         TokenKind::KFalse => Atom::Bool(false),
         TokenKind::Ident(i) => Atom::Ident(i),
+        TokenKind::Int(n) => Atom::Int(n),
+        TokenKind::Float(n) => Atom::Float(n),
         _ => unreachable!(),
     };
 
@@ -164,7 +166,7 @@ impl<'a> Parser<'a> {
         use lexer::TokenKind::*;
 
         let (nud, bp): (NullDenotation, i32) = match token.kind {
-            Ident(_) | KTrue | KFalse => {
+            Ident(_) | KTrue | KFalse | Int(_) | Float(_) => {
                 (null_constant, -1)
             }
             LParen => {
@@ -328,16 +330,19 @@ pub enum Expr {
 pub enum Atom {
     Ident(String),
     Bool(bool),
+    Int(i32),
+    Float(f32),
 }
 
 impl fmt::Display for Atom {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let s = match *self {
-            Atom::Bool(true) => "true",
-            Atom::Bool(false) => "false",
-            Atom::Ident(ref ident) => ident,
-        };
-        f.write_str(s)
+        match *self {
+            Atom::Bool(true) => f.write_str("true"),
+            Atom::Bool(false) => f.write_str("false"),
+            Atom::Ident(ref ident) => f.write_str(ident),
+            Atom::Int(n) => write!(f, "{}", n),
+            Atom::Float(n) => write!(f, "{}", n),
+        }
     }
 }
 
