@@ -3,6 +3,7 @@ use result::{Span, CompileResult};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TokenKind {
+    // Keywords
     KIf,
     KElse,
     KLet,
@@ -11,12 +12,12 @@ pub enum TokenKind {
     KPrint,
     KWhile,
 
-    LBrace,
-    RBrace,
-    LParen,
-    RParen,
-    LBracket,
-    RBracket,
+    LBrace, // {
+    RBrace, // }
+    LParen, // (
+    RParen, // )
+    LBracket, // [
+    RBracket, // ]
 
     Add,
     Sub,
@@ -120,6 +121,7 @@ impl<'a> Lexer<'a> {
 
             ';' => Semicolon,
             ',' => Comma,
+            '.' => Dot,
 
             '=' => {
                 if self.iter.matches('=') {
@@ -140,6 +142,14 @@ impl<'a> Lexer<'a> {
                     GtEq
                 } else {
                     Gt
+                }
+            }
+
+            '!' => {
+                if self.iter.matches('=') {
+                    NotEq
+                } else {
+                    return err!(span, "invalid character '!'");
                 }
             }
 
@@ -165,7 +175,7 @@ impl<'a> Lexer<'a> {
                 }
             }
 
-            ch => return err!(span, "Unknown character {:?}", ch),
+            ch => return err!(span, "invalid character {:?}", ch),
         };
 
         Ok(Some(Token { kind, span }))
