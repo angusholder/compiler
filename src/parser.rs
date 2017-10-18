@@ -1,3 +1,5 @@
+use std::fmt;
+
 use lexer::{ Lexer, Token, TokenKind };
 use result::{ Span, CompileResult };
 
@@ -119,12 +121,11 @@ fn left_binary_op(p: &mut Parser, token: Token, left: ExprEnt, rbp: i32) -> Comp
     Ok(p.make_expr(Expr::BinOp { kind, left, right }))
 }
 
-const COMMA_PREC: i32 = 1;
 fn left_func_call(p: &mut Parser, _token: Token, left: ExprEnt, _rbp: i32) -> CompileResult<ExprEnt> {
     let mut args = Vec::new();
     if !p.lexer.matches(TokenKind::RParen) {
         loop {
-            args.push(p.parse_expr_until(COMMA_PREC)?);
+            args.push(p.parse_expr_until(BP_COMMA)?);
             if p.lexer.matches(TokenKind::RParen) {
                 break;
             } else {
@@ -154,7 +155,7 @@ impl<'a> Parser<'a> {
                 (null_prefix_op, BP_UNARY)
             }
             _ => {
-                return err!(token.span, "Expected expression, found {:?}", token.kind);
+                return err!(token.span, "expected expression, found {:?}", token.kind);
             }
         };
 
@@ -203,12 +204,12 @@ impl<'a> Parser<'a> {
         Ok(false) // Not done
     }
 
-    pub fn parse_expr_until(&mut self, min_rbp: i32) -> CompileResult<ExprEnt> {
+    fn parse_expr_until(&mut self, min_rbp: i32) -> CompileResult<ExprEnt> {
         let token = if let Some(token) = self.lexer.next()? {
             token
         } else {
             let span = Span::new(self.lexer.offset(), self.lexer.offset());
-            return err!(span, "Expected expression, found end of file");
+            return err!(span, "expected expression, found end of file");
         };
 
         let mut node = self.parse_null(token)?;
@@ -220,6 +221,73 @@ impl<'a> Parser<'a> {
             }
         }
     }
+
+    pub fn parse_expr(&mut self) -> CompileResult<ExprEnt> {
+        self.parse_expr_until(0)
+    }
+
+    pub fn fmt_expr(&self, expr: ExprEnt) -> ExprFormatter {
+        ExprFormatter {
+            root: expr,
+            parser: self,
+        }
+    }
+}
+
+pub struct ExprFormatter<'a, 'src: 'a> {
+    root: ExprEnt,
+    parser: &'a Parser<'src>,
+}
+
+impl<'a, 'src> fmt::Display for ExprFormatter<'a, 'src> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        print_expr(f, self.parser, self.root, 0)
+    }
+}
+
+fn print_expr(f: &mut fmt::Formatter, parser: &Parser, expr: ExprEnt, indentation: i32) -> fmt::Result {
+    fn indent(f: &mut fmt::Formatter, n: i32) -> fmt::Result {
+        for _ in 0..n {
+            write!(f, "    ")?;
+        }
+        Ok(())
+    }
+
+    indent(f, indentation)?;
+    match *parser.get_expr(expr) {
+        Expr::BinOp { left, right, kind } => {
+            writeln!(f, "{}", kind)?;
+            print_expr(f, parser, left, indentation + 1)?;
+            print_expr(f, parser, right, indentation + 1)?;
+        }
+        Expr::UnaryOp { child, kind } => {
+            writeln!(f, "{}", kind)?;
+            print_expr(f, parser, child, indentation + 1)?;
+        }
+        Expr::Atom(ref atom) => {
+            writeln!(f, "{}", atom)?;
+        }
+        Expr::Attr { left, ref ident } => {
+            writeln!(f, "getattr {}", ident)?;
+            print_expr(f, parser, left, indentation + 1)?;
+        }
+        Expr::FuncCall { left, ref args } => {
+            writeln!(f, "call")?;
+            print_expr(f, parser, left, indentation + 1)?;
+
+            indent(f, indentation + 1)?;
+            writeln!(f, "(")?;
+
+            for &arg in args.iter() {
+                print_expr(f, parser, arg, indentation + 2)?;
+            }
+
+            indent(f, indentation + 1)?;
+            writeln!(f, ")")?;
+        }
+    }
+
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -250,6 +318,17 @@ pub enum Atom {
     Bool(bool),
 }
 
+impl fmt::Display for Atom {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let s = match *self {
+            Atom::Bool(true) => "true",
+            Atom::Bool(false) => "false",
+            Atom::Ident(ref ident) => ident,
+        };
+        f.write_str(s)
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BinOpKind {
     Add,
@@ -268,9 +347,41 @@ pub enum BinOpKind {
     Index, // a[b]
 }
 
+impl fmt::Display for BinOpKind {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use self::BinOpKind::*;
+        let s = match *self {
+            Add => "+",
+            Sub => "-",
+            Mul => "*",
+            Div => "/",
+            Rem => "%",
+
+            Lt => "<",
+            LtEq => "<=",
+            Gt => ">",
+            GtEq => ">=",
+            Eq => "==",
+            NotEq => "!=",
+
+            Index => "[]",
+        };
+        f.write_str(s)
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum UnaryOpKind {
     Neg,
+}
+
+impl fmt::Display for UnaryOpKind {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let s = match *self {
+            UnaryOpKind::Neg => "-",
+        };
+        f.write_str(s)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
