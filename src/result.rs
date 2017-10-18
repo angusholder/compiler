@@ -1,4 +1,4 @@
-pub type CompileResult<T> = Result<T, Error>;
+pub type CompileResult<T> = Result<T, CompileError>;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Span {
@@ -20,22 +20,22 @@ impl Span {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct Error {
+pub struct CompileError {
     pub span: Span,
     pub msg: String,
 }
 
-impl Error {
-    pub fn new(span: Span, msg: String) -> Error {
-        Error { span, msg }
+impl CompileError {
+    pub fn new(span: Span, msg: String) -> CompileError {
+        CompileError { span, msg }
     }
 }
 
 macro_rules! err {
     ($span:expr, $fmt:expr) => {
-        Err(::result::Error::new($span, format!($fmt)))
+        Err($crate::result::CompileError::new($span, format!($fmt)))
     };
     ($span:expr, $fmt:expr, $($arg:expr),+) => {
-        Err(::result::Error::new($span, format!($fmt, $($arg),+)))
+        Err($crate::result::CompileError::new($span, format!($fmt, $($arg),+)))
     };
 }
