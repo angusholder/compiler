@@ -1,6 +1,10 @@
+// Utility modules
 #[macro_use]
 mod result;
+#[macro_use]
+mod entity;
 mod chars;
+
 mod lexer;
 mod parser;
 
@@ -54,11 +58,11 @@ fn main() {
             loop {
                 match lexer.next() {
                     Ok(Some(token)) => {
-                        println!("{:?}", token.kind);
+                        println!("{}: {:?}", token.span.fmt(&program), token.kind);
                     }
                     Ok(None) => break,
                     Err(CompileError { msg, span }) => {
-                        eprintln!("Error [{}:{}]: {}", span.start, span.end, msg);
+                        eprintln!("Error {}: {}", span.fmt(&program), msg);
                         return;
                     }
                 }
@@ -71,7 +75,7 @@ fn main() {
                     println!("{}", parser.fmt_expr(expr));
                 }
                 Err(CompileError { msg, span }) => {
-                    eprintln!("Error [{}:{}]: {}", span.start, span.end, msg);
+                    eprintln!("Error {}: {}", span.fmt(&program), msg);
                     return;
                 }
             }

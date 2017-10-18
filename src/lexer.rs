@@ -181,13 +181,13 @@ impl<'a> Lexer<'a> {
         Ok(Some(Token { kind, span }))
     }
 
-    pub fn expect(&mut self, expected: TokenKind) -> CompileResult<()> {
+    pub fn expect(&mut self, expected: TokenKind) -> CompileResult<Span> {
         // If this fails it is a hard parse error, which is why we don't care about
         // consuming the next token with .next()
         match self.next()? {
             Some(token) => {
                 if token.kind == expected {
-                    Ok(())
+                    Ok(token.span)
                 } else {
                     err!(token.span, "got {:?}, expected {:?}", token.kind, expected)
                 }
@@ -200,9 +200,9 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn expect_ident(&mut self) -> CompileResult<String> {
+    pub fn expect_ident(&mut self) -> CompileResult<(String, Span)> {
         match self.next()? {
-            Some(Token { kind: TokenKind::Ident(ident), .. }) => Ok(ident),
+            Some(Token { kind: TokenKind::Ident(ident), span }) => Ok((ident, span)),
             Some(token) => {
                 err!(token.span, "got {:?}, expected an identifier", token.kind)
             }
@@ -214,17 +214,17 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn matches(&mut self, expected: TokenKind) -> bool {
+    pub fn matches(&mut self, expected: TokenKind) -> Option<Span> {
         if let Ok(Some(token)) = self.next() {
             if token.kind == expected {
-                true
+                Some(token.span)
             } else {
                 // Stupid borrow check issues forced me to do this dumb solution.
                 self.peeked = Some(token);
-                false
+                None
             }
         } else {
-            false
+            None
         }
     }
 

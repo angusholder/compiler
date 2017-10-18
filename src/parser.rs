@@ -1,33 +1,32 @@
 use std::fmt;
 
+use entity::{ PrimaryMap, EntityMap };
 use lexer::{ Lexer, Token, TokenKind };
 use result::{ Span, CompileResult };
 
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
-    expressions: Vec<Expr>,
+    expressions: PrimaryMap<ExprRef, Expr>,
+    expr_locs: EntityMap<ExprRef, Span>,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(src: &str) -> Parser {
         Parser {
             lexer: Lexer::new(src),
-            expressions: Vec::new(),
+            expressions: PrimaryMap::new(),
+            expr_locs: EntityMap::new(),
         }
     }
 
-    fn make_expr(&mut self, expr: Expr) -> ExprEnt {
-        let ent = ExprEnt(self.expressions.len() as u32);
-        self.expressions.push(expr);
-        ent
+    fn make_expr(&mut self, expr: Expr, span: Span) -> ExprRef {
+        let expr_ref = self.expressions.push(expr);
+        self.expr_locs[expr_ref] = span;
+        expr_ref
     }
 
-    fn get_expr(&self, expr_ent: ExprEnt) -> &Expr {
-        &self.expressions[expr_ent.0 as usize]
-    }
-
-    fn get_expr_mut(&mut self, expr_ent: ExprEnt) -> &mut Expr {
-        &mut self.expressions[expr_ent.0 as usize]
+    fn get_expr(&self, expr_ent: ExprRef) -> &Expr {
+        &self.expressions[expr_ent]
     }
 }
 
@@ -50,10 +49,10 @@ const BP_PRODUCT: i32  = 25; // *, /, %
 const BP_UNARY: i32    = 29; // -
 const BP_ACCESSOR: i32 = 31; // a(), a[b], a.b
 
-type NullDenotation = fn(p: &mut Parser, token: Token, bp: i32) -> CompileResult<ExprEnt>;
-type LeftDenotation = fn(p: &mut Parser, token: Token, left: ExprEnt, rbp: i32) -> CompileResult<ExprEnt>;
+type NullDenotation = fn(p: &mut Parser, token: Token, bp: i32) -> CompileResult<ExprRef>;
+type LeftDenotation = fn(p: &mut Parser, token: Token, left: ExprRef, rbp: i32) -> CompileResult<ExprRef>;
 
-fn null_constant(p: &mut Parser, token: Token, _bp: i32) -> CompileResult<ExprEnt> {
+fn null_constant(p: &mut Parser, token: Token, _bp: i32) -> CompileResult<ExprRef> {
     let atom = match token.kind {
         TokenKind::KTrue => Atom::Bool(true),
         TokenKind::KFalse => Atom::Bool(false),
@@ -61,12 +60,13 @@ fn null_constant(p: &mut Parser, token: Token, _bp: i32) -> CompileResult<ExprEn
         _ => unreachable!(),
     };
 
-    Ok(p.make_expr(Expr::Atom(atom)))
+    Ok(p.make_expr(Expr::Atom(atom), token.span))
 }
 
-fn null_paren(p: &mut Parser, _token: Token, bp: i32) -> CompileResult<ExprEnt> {
+fn null_paren(p: &mut Parser, start_token: Token, bp: i32) -> CompileResult<ExprRef> {
     let result = p.parse_expr_until(bp)?;
-    p.lexer.expect(TokenKind::RParen)?;
+    let end_span = p.lexer.expect(TokenKind::RParen)?;
+    p.expr_locs[result] = Span::between(start_token.span, end_span);
     Ok(result)
 }
 
@@ -77,29 +77,32 @@ fn null_paren(p: &mut Parser, _token: Token, bp: i32) -> CompileResult<ExprEnt> 
 //
 // High precedence: logical negation, bitwise complement, etc.
 //   !x && y is (!x) && y, not !(x && y)
-fn null_prefix_op(p: &mut Parser, token: Token, bp: i32) -> CompileResult<ExprEnt> {
+fn null_prefix_op(p: &mut Parser, token: Token, bp: i32) -> CompileResult<ExprRef> {
     let child = p.parse_expr_until(bp)?;
     let kind = match token.kind {
         TokenKind::Sub => UnaryOpKind::Neg,
         _ => unreachable!(),
     };
 
-    Ok(p.make_expr(Expr::UnaryOp { kind, child }))
+    let span = Span::between(token.span, p.expr_locs[child]);
+    Ok(p.make_expr(Expr::UnaryOp { kind, child }, span))
 }
 
 // Left Denotations -- token that takes an expression on the left
-fn left_index(p: &mut Parser, _token: Token, left: ExprEnt, _rbp: i32) -> CompileResult<ExprEnt> {
+fn left_index(p: &mut Parser, _token: Token, left: ExprRef, _rbp: i32) -> CompileResult<ExprRef> {
     let right = p.parse_expr_until(0)?;
-    p.lexer.expect(TokenKind::RBracket)?;
-    Ok(p.make_expr(Expr::BinOp { left, right, kind: BinOpKind::Index }))
+    let end_span = p.lexer.expect(TokenKind::RBracket)?;
+    let span = Span::between(p.expr_locs[left], end_span);
+    Ok(p.make_expr(Expr::BinOp { left, right, kind: BinOpKind::Index }, span))
 }
 
-fn left_attr(p: &mut Parser, _token: Token, left: ExprEnt, _rbp: i32) -> CompileResult<ExprEnt> {
-    let ident = p.lexer.expect_ident()?;
-    Ok(p.make_expr(Expr::Attr { left, ident }))
+fn left_attr(p: &mut Parser, _token: Token, left: ExprRef, _rbp: i32) -> CompileResult<ExprRef> {
+    let (ident, end_span) = p.lexer.expect_ident()?;
+    let span = Span::between(p.expr_locs[left], end_span);
+    Ok(p.make_expr(Expr::Attr { left, ident }, span))
 }
 
-fn left_binary_op(p: &mut Parser, token: Token, left: ExprEnt, rbp: i32) -> CompileResult<ExprEnt> {
+fn left_binary_op(p: &mut Parser, token: Token, left: ExprRef, rbp: i32) -> CompileResult<ExprRef> {
     let kind = match token.kind {
         TokenKind::Add => BinOpKind::Add,
         TokenKind::Sub => BinOpKind::Sub,
@@ -118,30 +121,32 @@ fn left_binary_op(p: &mut Parser, token: Token, left: ExprEnt, rbp: i32) -> Comp
 
     let right = p.parse_expr_until(rbp)?;
 
-    Ok(p.make_expr(Expr::BinOp { kind, left, right }))
+    let span = Span::between(p.expr_locs[left], p.expr_locs[right]);
+    Ok(p.make_expr(Expr::BinOp { kind, left, right }, span))
 }
 
-fn left_func_call(p: &mut Parser, _token: Token, left: ExprEnt, _rbp: i32) -> CompileResult<ExprEnt> {
+fn left_func_call(p: &mut Parser, _token: Token, left: ExprRef, _rbp: i32) -> CompileResult<ExprRef> {
     let mut args = Vec::new();
-    if !p.lexer.matches(TokenKind::RParen) {
+    let span = if let Some(end_span) = p.lexer.matches(TokenKind::RParen) {
+        Span::between(p.expr_locs[left], end_span)
+    } else {
         loop {
             args.push(p.parse_expr_until(BP_COMMA)?);
-            if p.lexer.matches(TokenKind::RParen) {
-                break;
-            } else {
-                p.lexer.expect(TokenKind::Comma)?;
+            if p.lexer.matches(TokenKind::Comma).is_some() {
+                let end_span = p.lexer.expect(TokenKind::RParen)?;
+                break Span::between(p.expr_locs[left], end_span);
             }
         }
-    }
+    };
 
     Ok(p.make_expr(Expr::FuncCall {
         left,
         args: args.into_boxed_slice(),
-    }))
+    }, span))
 }
 
 impl<'a> Parser<'a> {
-    fn parse_null(&mut self, token: Token) -> CompileResult<ExprEnt> {
+    fn parse_null(&mut self, token: Token) -> CompileResult<ExprRef> {
         use lexer::TokenKind::*;
 
         let (nud, bp): (NullDenotation, i32) = match token.kind {
@@ -162,7 +167,7 @@ impl<'a> Parser<'a> {
         nud(self, token, bp)
     }
 
-    fn parse_left(&mut self, min_rbp: i32, node: &mut ExprEnt) -> CompileResult<bool> {
+    fn parse_left(&mut self, min_rbp: i32, node: &mut ExprRef) -> CompileResult<bool> {
         use lexer::TokenKind::*;
 
         let (led, bp): (LeftDenotation, i32) = {
@@ -204,7 +209,7 @@ impl<'a> Parser<'a> {
         Ok(false) // Not done
     }
 
-    fn parse_expr_until(&mut self, min_rbp: i32) -> CompileResult<ExprEnt> {
+    fn parse_expr_until(&mut self, min_rbp: i32) -> CompileResult<ExprRef> {
         let token = if let Some(token) = self.lexer.next()? {
             token
         } else {
@@ -222,11 +227,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse_expr(&mut self) -> CompileResult<ExprEnt> {
+    pub fn parse_expr(&mut self) -> CompileResult<ExprRef> {
         self.parse_expr_until(0)
     }
 
-    pub fn fmt_expr(&self, expr: ExprEnt) -> ExprFormatter {
+    pub fn fmt_expr(&self, expr: ExprRef) -> ExprFormatter {
         ExprFormatter {
             root: expr,
             parser: self,
@@ -235,7 +240,7 @@ impl<'a> Parser<'a> {
 }
 
 pub struct ExprFormatter<'a, 'src: 'a> {
-    root: ExprEnt,
+    root: ExprRef,
     parser: &'a Parser<'src>,
 }
 
@@ -245,7 +250,7 @@ impl<'a, 'src> fmt::Display for ExprFormatter<'a, 'src> {
     }
 }
 
-fn print_expr(f: &mut fmt::Formatter, parser: &Parser, expr: ExprEnt, indentation: i32) -> fmt::Result {
+fn print_expr(f: &mut fmt::Formatter, parser: &Parser, expr: ExprRef, indentation: i32) -> fmt::Result {
     fn indent(f: &mut fmt::Formatter, n: i32) -> fmt::Result {
         for _ in 0..n {
             write!(f, "    ")?;
@@ -294,20 +299,20 @@ fn print_expr(f: &mut fmt::Formatter, parser: &Parser, expr: ExprEnt, indentatio
 pub enum Expr {
     BinOp {
         kind: BinOpKind,
-        left: ExprEnt,
-        right: ExprEnt,
+        left: ExprRef,
+        right: ExprRef,
     },
     UnaryOp {
         kind: UnaryOpKind,
-        child: ExprEnt,
+        child: ExprRef,
     },
     Attr {
-        left: ExprEnt,
+        left: ExprRef,
         ident: String,
     },
     FuncCall {
-        left: ExprEnt,
-        args: Box<[ExprEnt]>,
+        left: ExprRef,
+        args: Box<[ExprRef]>,
     },
     Atom(Atom),
 }
@@ -385,4 +390,5 @@ impl fmt::Display for UnaryOpKind {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct ExprEnt(u32);
+pub struct ExprRef(u32);
+impl_entity!(ExprRef);
