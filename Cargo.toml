@@ -5,3 +5,4 @@ authors = ["Angus Holder <aholder97@gmail.com>"]
 
 [dependencies]
 clap = "*"
+backtrace = "*"

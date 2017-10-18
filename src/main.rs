@@ -9,6 +9,7 @@ mod lexer;
 mod parser;
 
 extern crate clap;
+extern crate backtrace;
 
 use std::error::Error;
 use std::fs::File;
@@ -16,7 +17,6 @@ use std::io::prelude::*;
 
 use lexer::Lexer;
 use parser::Parser;
-use result::CompileError;
 
 use clap::{ App, Arg, ArgMatches };
 
@@ -61,8 +61,8 @@ fn main() {
                         println!("{}: {:?}", token.span.fmt(&program), token.kind);
                     }
                     Ok(None) => break,
-                    Err(CompileError { msg, span }) => {
-                        eprintln!("Error {}: {}", span.fmt(&program), msg);
+                    Err(mut error) => {
+                        eprintln!("{}", error.fmt(&program));
                         return;
                     }
                 }
@@ -70,12 +70,12 @@ fn main() {
         }
         "ast" => {
             let mut parser = Parser::new(&program);
-            match parser.parse_expr() {
-                Ok(expr) => {
-                    println!("{}", parser.fmt_expr(expr));
+            match parser.parse_block() {
+                Ok(stmt) => {
+                    println!("{}", parser.fmt_stmt(stmt));
                 }
-                Err(CompileError { msg, span }) => {
-                    eprintln!("Error {}: {}", span.fmt(&program), msg);
+                Err(mut error) => {
+                    eprintln!("{}", error.fmt(&program));
                     return;
                 }
             }
