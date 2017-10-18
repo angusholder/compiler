@@ -36,6 +36,7 @@ pub enum TokenKind {
     Assign,
 
     Semicolon,
+    Colon,
     Comma,
 
     Ident(String),
@@ -120,6 +121,7 @@ impl<'a> Lexer<'a> {
             '/' => Divide,
 
             ';' => Semicolon,
+            ':' => Colon,
             ',' => Comma,
             '.' => Dot,
 
@@ -230,6 +232,14 @@ impl<'a> Lexer<'a> {
 
     pub fn offset(&self) -> usize {
         self.iter.offset()
+    }
+
+    pub fn eof_span(&self) -> Span {
+        Span::new(self.offset(), self.offset())
+    }
+
+    pub fn is_eof(&mut self) -> bool {
+        if let Ok(None) = self.peek() { true } else { false }
     }
 }
 

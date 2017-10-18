@@ -8,6 +8,8 @@ pub struct Parser<'a> {
     lexer: Lexer<'a>,
     expressions: PrimaryMap<ExprRef, Expr>,
     expr_locs: EntityMap<ExprRef, Span>,
+    statements: PrimaryMap<StmtRef, Stmt>,
+    stmt_locs: EntityMap<StmtRef, Span>,
 }
 
 impl<'a> Parser<'a> {
@@ -16,6 +18,8 @@ impl<'a> Parser<'a> {
             lexer: Lexer::new(src),
             expressions: PrimaryMap::new(),
             expr_locs: EntityMap::new(),
+            statements: PrimaryMap::new(),
+            stmt_locs: EntityMap::new(),
         }
     }
 
@@ -27,6 +31,16 @@ impl<'a> Parser<'a> {
 
     fn get_expr(&self, expr_ent: ExprRef) -> &Expr {
         &self.expressions[expr_ent]
+    }
+
+    fn make_stmt(&mut self, stmt: Stmt, span: Span) -> StmtRef {
+        let stmt_ref = self.statements.push(stmt);
+        self.stmt_locs[stmt_ref] = span;
+        stmt_ref
+    }
+
+    fn get_stmt(&self, stmt_ref: StmtRef) -> &Stmt {
+        &self.statements[stmt_ref]
     }
 }
 
@@ -132,7 +146,7 @@ fn left_func_call(p: &mut Parser, _token: Token, left: ExprRef, _rbp: i32) -> Co
     } else {
         loop {
             args.push(p.parse_expr_until(BP_COMMA)?);
-            if p.lexer.matches(TokenKind::Comma).is_some() {
+            if !p.lexer.matches(TokenKind::Comma).is_some() {
                 let end_span = p.lexer.expect(TokenKind::RParen)?;
                 break Span::between(p.expr_locs[left], end_span);
             }
@@ -250,41 +264,34 @@ impl<'a, 'src> fmt::Display for ExprFormatter<'a, 'src> {
     }
 }
 
-fn print_expr(f: &mut fmt::Formatter, parser: &Parser, expr: ExprRef, indentation: i32) -> fmt::Result {
-    fn indent(f: &mut fmt::Formatter, n: i32) -> fmt::Result {
-        for _ in 0..n {
-            write!(f, "    ")?;
-        }
-        Ok(())
-    }
-
+fn print_expr(f: &mut fmt::Formatter, p: &Parser, expr: ExprRef, indentation: i32) -> fmt::Result {
     indent(f, indentation)?;
-    match *parser.get_expr(expr) {
+    match *p.get_expr(expr) {
         Expr::BinOp { left, right, kind } => {
             writeln!(f, "{}", kind)?;
-            print_expr(f, parser, left, indentation + 1)?;
-            print_expr(f, parser, right, indentation + 1)?;
+            print_expr(f, p, left, indentation + 1)?;
+            print_expr(f, p, right, indentation + 1)?;
         }
         Expr::UnaryOp { child, kind } => {
             writeln!(f, "{}", kind)?;
-            print_expr(f, parser, child, indentation + 1)?;
+            print_expr(f, p, child, indentation + 1)?;
         }
         Expr::Atom(ref atom) => {
             writeln!(f, "{}", atom)?;
         }
         Expr::Attr { left, ref ident } => {
             writeln!(f, "getattr {}", ident)?;
-            print_expr(f, parser, left, indentation + 1)?;
+            print_expr(f, p, left, indentation + 1)?;
         }
         Expr::FuncCall { left, ref args } => {
             writeln!(f, "call")?;
-            print_expr(f, parser, left, indentation + 1)?;
+            print_expr(f, p, left, indentation + 1)?;
 
             indent(f, indentation + 1)?;
             writeln!(f, "(")?;
 
             for &arg in args.iter() {
-                print_expr(f, parser, arg, indentation + 2)?;
+                print_expr(f, p, arg, indentation + 2)?;
             }
 
             indent(f, indentation + 1)?;
@@ -392,3 +399,182 @@ impl fmt::Display for UnaryOpKind {
 #[derive(Clone, Copy, Debug)]
 pub struct ExprRef(u32);
 impl_entity!(ExprRef);
+
+
+
+impl<'a> Parser<'a> {
+    pub fn parse_stmt(&mut self) -> CompileResult<StmtRef> {
+        match self.lexer.next()? {
+            Some(Token { kind: TokenKind::KIf, span }) => {
+                self.parse_if_stmt(span)
+            }
+            Some(Token { kind: TokenKind::KWhile, span }) => {
+                let cond = self.parse_expr()?;
+                self.lexer.expect(TokenKind::LBrace)?;
+                let block = self.parse_block()?;
+                let end_span = self.lexer.expect(TokenKind::RBrace)?;
+                let span = Span::between(span, end_span);
+                Ok(self.make_stmt(Stmt::While { cond, block }, span))
+            }
+            Some(Token { kind: TokenKind::KLet, span }) => {
+                let (name, _) = self.lexer.expect_ident()?;
+                self.lexer.expect(TokenKind::Colon)?;
+                let (ty, _) = self.lexer.expect_ident()?;
+                self.lexer.expect(TokenKind::Assign)?;
+                let expr = self.parse_expr()?;
+                let end_span = self.lexer.expect(TokenKind::Semicolon)?;
+                let span = Span::between(span, end_span);
+                Ok(self.make_stmt(Stmt::Let { name, ty, expr }, span))
+            }
+            Some(token) => {
+                self.lexer.unget(token);
+                let expr = self.parse_expr()?;
+                let end_span = self.lexer.expect(TokenKind::Semicolon)?;
+                let span = Span::between(self.expr_locs[expr], end_span);
+                Ok(self.make_stmt(Stmt::Expr(expr), span))
+            }
+            None => {
+                return err!(self.lexer.eof_span(), "expected statement, found end of file");
+            }
+        }
+    }
+
+    fn parse_if_stmt(&mut self, token_span: Span) -> CompileResult<StmtRef> {
+        let cond = self.parse_expr()?;
+        let then = self.parse_brace_block()?;
+
+        let mut span = Span::between(token_span, self.stmt_locs[then]);
+        let mut els = None;
+
+        if self.lexer.matches(TokenKind::KElse).is_some() {
+            if let Some(token_span) = self.lexer.matches(TokenKind::KIf) {
+                let stmt = self.parse_if_stmt(token_span)?;
+                els = Some(stmt);
+                span = Span::between(span, self.stmt_locs[stmt]);
+            } else {
+                let block = self.parse_brace_block()?;
+                els = Some(block);
+                span = Span::between(span, self.stmt_locs[block]);
+            }
+        }
+
+        Ok(self.make_stmt(Stmt::If { cond, then, els }, span))
+    }
+
+    fn parse_brace_block(&mut self) -> CompileResult<StmtRef> {
+        let start_span = self.lexer.expect(TokenKind::LBrace)?;
+
+        let mut stmts = Vec::new();
+        while !self.lexer.is_eof() {
+            if let Ok(Some(&Token { kind: TokenKind::RBrace, .. })) = self.lexer.peek() {
+                break;
+            }
+            stmts.push(self.parse_stmt()?);
+        }
+
+        let end_span = self.lexer.expect(TokenKind::RBrace)?;
+        let span = Span::between(start_span, end_span);
+        Ok(self.make_stmt(Stmt::Block(Block { stmts }), span))
+    }
+
+    pub fn parse_block(&mut self) -> CompileResult<StmtRef> {
+        let mut stmts = Vec::new();
+        while !self.lexer.is_eof() {
+            stmts.push(self.parse_stmt()?);
+        }
+        let span = if stmts.len() == 0 {
+            Span::new(0, 0)
+        } else {
+            Span::between(self.stmt_locs[*stmts.first().unwrap()], self.stmt_locs[*stmts.last().unwrap()])
+        };
+        Ok(self.make_stmt(Stmt::Block(Block { stmts }), span))
+    }
+
+    pub fn fmt_stmt(&self, stmt: StmtRef) -> StmtFormatter {
+        StmtFormatter {
+            parser: self,
+            stmt
+        }
+    }
+}
+
+pub struct StmtFormatter<'a, 'src: 'a> {
+    parser: &'a Parser<'src>,
+    stmt: StmtRef,
+}
+
+impl<'a, 'src: 'a> fmt::Display for StmtFormatter<'a, 'src> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        print_stmt(f, self.parser, self.stmt, 0)
+    }
+}
+
+fn print_stmt(f: &mut fmt::Formatter, p: &Parser, stmt: StmtRef, indentation: i32) -> fmt::Result {
+    match *p.get_stmt(stmt) {
+        Stmt::Let { ref name, ref ty, expr } => {
+            indent(f, indentation)?;
+            writeln!(f, "let {}: {} =", name, ty)?;
+            print_expr(f, p, expr, indentation + 1)?;
+        }
+        Stmt::Block(Block { ref stmts }) => {
+            for &stmt in stmts {
+                print_stmt(f, p, stmt, indentation)?;
+            }
+        }
+        Stmt::Expr(expr) => print_expr(f, p, expr, indentation)?,
+        Stmt::If { cond, then, els } => {
+            indent(f, indentation)?;
+            writeln!(f, "if")?;
+            print_expr(f, p, cond, indentation + 1)?;
+            indent(f, indentation)?;
+            writeln!(f, "then")?;
+            print_stmt(f, p, then, indentation + 1)?;
+            if let Some(els) = els {
+                indent(f, indentation)?;
+                writeln!(f, "else")?;
+                print_stmt(f, p, els, indentation + 1)?;
+            }
+        }
+        Stmt::While { cond, block } => {
+            indent(f, indentation)?;
+            writeln!(f, "while")?;
+            print_expr(f, p, cond, indentation + 1)?;
+            print_stmt(f, p, block, indentation + 1)?;
+        }
+    }
+    Ok(())
+}
+
+enum Stmt {
+    Let {
+        name: String,
+        ty: String,
+        expr: ExprRef,
+    },
+    If {
+        cond: ExprRef,
+        then: StmtRef,
+        els: Option<StmtRef>,
+    },
+    While {
+        cond: ExprRef,
+        block: StmtRef,
+    },
+    Expr(ExprRef),
+    Block(Block),
+}
+
+struct Block {
+    stmts: Vec<StmtRef>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct StmtRef(u32);
+impl_entity!(StmtRef);
+
+fn indent(f: &mut fmt::Formatter, n: i32) -> fmt::Result {
+    for _ in 0..n {
+        write!(f, "    ")?;
+    }
+    Ok(())
+}
