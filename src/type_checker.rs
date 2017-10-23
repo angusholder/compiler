@@ -85,9 +85,9 @@ impl TypeChecker {
 
                 let left_ty = Type::from_str(ty)?;
                 let prev = self.variable_types.insert(name.to_string(), left_ty);
-                if let Some(prev_type) = prev {
+                if let Some(prev_ty) = prev {
                     return err!(ast.stmt_locs[stmt],
-                        "variable `{}` shadows variable of type {}", name, ty);
+                        "variable `{}` shadows variable of type {}", name, prev_ty);
                 }
 
                 let right_ty = self.check_expr(ast, expr)?;
