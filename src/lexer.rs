@@ -51,14 +51,14 @@ pub struct Token {
 }
 
 #[derive(Debug)]
-pub struct Lexer<'a> {
-    iter: PeekableCharIndices<'a>,
-    src: &'a str,
+pub struct Lexer<'src> {
+    iter: PeekableCharIndices<'src>,
+    src: &'src str,
     peeked: Option<Token>,
 }
 
-impl<'a> Lexer<'a> {
-    pub fn new(src: &'a str) -> Lexer<'a> {
+impl<'src> Lexer<'src> {
+    pub fn new(src: &'src str) -> Lexer<'src> {
         Lexer {
             iter: PeekableCharIndices::new(src),
             src,
@@ -264,6 +264,10 @@ impl<'a> Lexer<'a> {
 
     pub fn is_eof(&mut self) -> bool {
         if let Ok(None) = self.peek() { true } else { false }
+    }
+
+    pub fn src(&self) -> &'src str {
+        self.src
     }
 }
 

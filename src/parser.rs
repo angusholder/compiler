@@ -4,15 +4,15 @@ use entity::{ PrimaryMap, EntityMap };
 use lexer::{ Lexer, Token, TokenKind };
 use result::{ Span, CompileResult };
 
-pub struct Parser<'a> {
-    lexer: Lexer<'a>,
+pub struct Parser<'src> {
+    lexer: Lexer<'src>,
     expressions: PrimaryMap<ExprRef, Expr>,
     expr_locs: EntityMap<ExprRef, Span>,
     statements: PrimaryMap<StmtRef, Stmt>,
     stmt_locs: EntityMap<StmtRef, Span>,
 }
 
-impl<'a> Parser<'a> {
+impl<'src> Parser<'src> {
     pub fn new(src: &str) -> Parser {
         Parser {
             lexer: Lexer::new(src),
@@ -68,15 +68,15 @@ type LeftDenotation = fn(p: &mut Parser, token: Token, left: ExprRef, rbp: i32) 
 
 fn null_constant(p: &mut Parser, token: Token, _bp: i32) -> CompileResult<ExprRef> {
     let atom = match token.kind {
-        TokenKind::KTrue => Atom::Bool(true),
-        TokenKind::KFalse => Atom::Bool(false),
-        TokenKind::Ident(i) => Atom::Ident(i),
-        TokenKind::Int(n) => Atom::Int(n),
-        TokenKind::Float(n) => Atom::Float(n),
+        TokenKind::KTrue => Lit::Bool(true),
+        TokenKind::KFalse => Lit::Bool(false),
+        TokenKind::Ident(i) => Lit::Ident(i),
+        TokenKind::Int(n) => Lit::Int(n),
+        TokenKind::Float(n) => Lit::Float(n),
         _ => unreachable!(),
     };
 
-    Ok(p.make_expr(Expr::Atom(atom), token.span))
+    Ok(p.make_expr(Expr::Lit(atom), token.span))
 }
 
 fn null_paren(p: &mut Parser, start_token: Token, bp: i32) -> CompileResult<ExprRef> {
@@ -115,7 +115,7 @@ fn left_index(p: &mut Parser, _token: Token, left: ExprRef, _rbp: i32) -> Compil
 fn left_attr(p: &mut Parser, _token: Token, left: ExprRef, _rbp: i32) -> CompileResult<ExprRef> {
     let (ident, end_span) = p.lexer.expect_ident()?;
     let span = Span::between(p.expr_locs[left], end_span);
-    Ok(p.make_expr(Expr::Attr { left, ident }, span))
+    Ok(p.make_expr(Expr::Field { left, ident }, span))
 }
 
 fn left_binary_op(p: &mut Parser, token: Token, left: ExprRef, rbp: i32) -> CompileResult<ExprRef> {
@@ -244,7 +244,14 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse_expr(&mut self) -> CompileResult<ExprRef> {
-        self.parse_expr_until(0)
+        let left = self.parse_expr_until(0)?;
+        if self.lexer.matches(TokenKind::Assign).is_some() {
+            let right = self.parse_expr_until(0)?;
+            let span = Span::between(self.expr_locs[left], self.expr_locs[right]);
+            Ok(self.make_expr(Expr::Assignment { left, right }, span))
+        } else {
+            Ok(left)
+        }
     }
 
     pub fn fmt_expr(&self, expr: ExprRef) -> ExprFormatter {
@@ -278,10 +285,10 @@ fn print_expr(f: &mut fmt::Formatter, p: &Parser, expr: ExprRef, indentation: i3
             writeln!(f, "{}", kind)?;
             print_expr(f, p, child, indentation + 1)?;
         }
-        Expr::Atom(ref atom) => {
+        Expr::Lit(ref atom) => {
             writeln!(f, "{}", atom)?;
         }
-        Expr::Attr { left, ref ident } => {
+        Expr::Field { left, ref ident } => {
             writeln!(f, "getattr {}", ident)?;
             print_expr(f, p, left, indentation + 1)?;
         }
@@ -299,6 +306,11 @@ fn print_expr(f: &mut fmt::Formatter, p: &Parser, expr: ExprRef, indentation: i3
             indent(f, indentation + 1)?;
             writeln!(f, ")")?;
         }
+        Expr::Assignment { left, right } => {
+            writeln!(f, "assign")?;
+            print_expr(f, p, left, indentation + 1)?;
+            print_expr(f, p, right, indentation + 1)?;
+        }
     }
 
     Ok(())
@@ -315,7 +327,7 @@ pub enum Expr {
         kind: UnaryOpKind,
         child: ExprRef,
     },
-    Attr {
+    Field {
         left: ExprRef,
         ident: String,
     },
@@ -323,25 +335,29 @@ pub enum Expr {
         left: ExprRef,
         args: Box<[ExprRef]>,
     },
-    Atom(Atom),
+    Assignment {
+        left: ExprRef,
+        right: ExprRef,
+    },
+    Lit(Lit),
 }
 
 #[derive(Debug, PartialEq)]
-pub enum Atom {
+pub enum Lit {
     Ident(String),
     Bool(bool),
     Int(i32),
     Float(f32),
 }
 
-impl fmt::Display for Atom {
+impl fmt::Display for Lit {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Atom::Bool(true) => f.write_str("true"),
-            Atom::Bool(false) => f.write_str("false"),
-            Atom::Ident(ref ident) => f.write_str(ident),
-            Atom::Int(n) => write!(f, "{}", n),
-            Atom::Float(n) => write!(f, "{}", n),
+            Lit::Bool(true) => f.write_str("true"),
+            Lit::Bool(false) => f.write_str("false"),
+            Lit::Ident(ref ident) => f.write_str(ident),
+            Lit::Int(n) => write!(f, "{}", n),
+            Lit::Float(n) => write!(f, "{}", n),
         }
     }
 }
@@ -407,7 +423,10 @@ impl_entity!(ExprRef);
 
 
 
-impl<'a> Parser<'a> {
+//
+// Statement parsing
+//
+impl<'src> Parser<'src> {
     pub fn parse_stmt(&mut self) -> CompileResult<StmtRef> {
         match self.lexer.next()? {
             Some(Token { kind: TokenKind::KIf, span }) => {
@@ -429,7 +448,11 @@ impl<'a> Parser<'a> {
                 let expr = self.parse_expr()?;
                 let end_span = self.lexer.expect(TokenKind::Semicolon)?;
                 let span = Span::between(span, end_span);
-                Ok(self.make_stmt(Stmt::Let { name, ty, expr }, span))
+                Ok(self.make_stmt(Stmt::Let {
+                    name,
+                    ty: Some(ty),
+                    expr: Some(expr)
+                }, span))
             }
             Some(token) => {
                 self.lexer.unget(token);
@@ -495,12 +518,33 @@ impl<'a> Parser<'a> {
         Ok(self.make_stmt(Stmt::Block(Block { stmts }), span))
     }
 
+    pub fn parse(mut self) -> CompileResult<Ast<'src>> {
+        let root_block = self.parse_block()?;
+        Ok(Ast {
+            root_block,
+            expressions: self.expressions,
+            expr_locs: self.expr_locs,
+            statements: self.statements,
+            stmt_locs: self.stmt_locs,
+            src: self.lexer.src(),
+        })
+    }
+
     pub fn fmt_stmt(&self, stmt: StmtRef) -> StmtFormatter {
         StmtFormatter {
             parser: self,
             stmt
         }
     }
+}
+
+pub struct Ast<'a> {
+    pub root_block: StmtRef,
+    pub expressions: PrimaryMap<ExprRef, Expr>,
+    pub expr_locs: EntityMap<ExprRef, Span>,
+    pub statements: PrimaryMap<StmtRef, Stmt>,
+    pub stmt_locs: EntityMap<StmtRef, Span>,
+    pub src: &'a str,
 }
 
 pub struct StmtFormatter<'a, 'src: 'a> {
@@ -518,8 +562,16 @@ fn print_stmt(f: &mut fmt::Formatter, p: &Parser, stmt: StmtRef, indentation: i3
     match *p.get_stmt(stmt) {
         Stmt::Let { ref name, ref ty, expr } => {
             indent(f, indentation)?;
-            writeln!(f, "let {}: {} =", name, ty)?;
-            print_expr(f, p, expr, indentation + 1)?;
+            write!(f, "let {}", name)?;
+            if let &Some(ref ty) = ty {
+                write!(f, ": {}", ty)?;
+            }
+            if let Some(expr) = expr {
+                writeln!(f, " =")?;
+                print_expr(f, p, expr, indentation + 1)?;
+            } else {
+                writeln!(f)?;
+            }
         }
         Stmt::Block(Block { ref stmts }) => {
             for &stmt in stmts {
@@ -550,11 +602,11 @@ fn print_stmt(f: &mut fmt::Formatter, p: &Parser, stmt: StmtRef, indentation: i3
     Ok(())
 }
 
-enum Stmt {
+pub enum Stmt {
     Let {
         name: String,
-        ty: String,
-        expr: ExprRef,
+        ty: Option<String>,
+        expr: Option<ExprRef>,
     },
     If {
         cond: ExprRef,
@@ -569,7 +621,7 @@ enum Stmt {
     Block(Block),
 }
 
-struct Block {
+pub struct Block {
     stmts: Vec<StmtRef>,
 }
 
