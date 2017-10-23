@@ -9,6 +9,7 @@ mod ast;
 mod ast_printer;
 mod lexer;
 mod parser;
+mod type_checker;
 
 extern crate clap;
 extern crate backtrace;
@@ -19,6 +20,7 @@ use std::io::prelude::*;
 
 use lexer::Lexer;
 use parser::Parser;
+use type_checker::TypeChecker;
 
 use clap::{ App, Arg, ArgMatches };
 
@@ -32,7 +34,7 @@ fn main() {
         .arg(Arg::with_name("mode")
             .short("m")
             .long("mode")
-            .possible_values(&["tokens", "ast"])
+            .possible_values(&["tokens", "ast", "typecheck"])
             .default_value("ast"))
         .arg(Arg::with_name("INPUT_FILE")
             .help("Set the input source file to use")
@@ -75,6 +77,20 @@ fn main() {
             match parser.parse_block() {
                 Ok(stmt) => {
                     println!("{}", parser.fmt_stmt(stmt));
+                }
+                Err(mut error) => {
+                    eprintln!("{}", error.fmt(&program));
+                    return;
+                }
+            }
+        }
+        "typecheck" => {
+            match Parser::new(&program).parse() {
+                Ok(ast) => {
+                    if let Err(mut error) = TypeChecker::new().check(&ast) {
+                        eprintln!("{}", error.fmt(&program));
+                        return;
+                    }
                 }
                 Err(mut error) => {
                     eprintln!("{}", error.fmt(&program));
