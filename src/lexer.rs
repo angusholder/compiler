@@ -165,6 +165,7 @@ impl<'src> Lexer<'src> {
                     }
                 }
                 if let Some((_, '.')) = self.iter.peek() {
+                    self.iter.next();
                     while let Some((_, ch)) = self.iter.peek() {
                         match ch {
                             '0'...'9' => { self.iter.next(); }
