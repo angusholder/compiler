@@ -1,5 +1,5 @@
-use std::fmt;
-
+use ast::{ StmtRef, Stmt, ExprRef, Expr, Lit, UnaryOpKind, BinOpKind, Block, Ast };
+use ast_printer::{ ExprFormatter, StmtFormatter };
 use entity::{ PrimaryMap, EntityMap };
 use lexer::{ Lexer, Token, TokenKind };
 use result::{ Span, CompileResult };
@@ -29,7 +29,7 @@ impl<'src> Parser<'src> {
         expr_ref
     }
 
-    fn get_expr(&self, expr_ent: ExprRef) -> &Expr {
+    pub fn get_expr(&self, expr_ent: ExprRef) -> &Expr {
         &self.expressions[expr_ent]
     }
 
@@ -39,7 +39,7 @@ impl<'src> Parser<'src> {
         stmt_ref
     }
 
-    fn get_stmt(&self, stmt_ref: StmtRef) -> &Stmt {
+    pub fn get_stmt(&self, stmt_ref: StmtRef) -> &Stmt {
         &self.statements[stmt_ref]
     }
 }
@@ -255,171 +255,9 @@ impl<'a> Parser<'a> {
     }
 
     pub fn fmt_expr(&self, expr: ExprRef) -> ExprFormatter {
-        ExprFormatter {
-            root: expr,
-            parser: self,
-        }
+        ExprFormatter::new(expr, self)
     }
 }
-
-pub struct ExprFormatter<'a, 'src: 'a> {
-    root: ExprRef,
-    parser: &'a Parser<'src>,
-}
-
-impl<'a, 'src> fmt::Display for ExprFormatter<'a, 'src> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        print_expr(f, self.parser, self.root, 0)
-    }
-}
-
-fn print_expr(f: &mut fmt::Formatter, p: &Parser, expr: ExprRef, indentation: i32) -> fmt::Result {
-    indent(f, indentation)?;
-    match *p.get_expr(expr) {
-        Expr::BinOp { left, right, kind } => {
-            writeln!(f, "{}", kind)?;
-            print_expr(f, p, left, indentation + 1)?;
-            print_expr(f, p, right, indentation + 1)?;
-        }
-        Expr::UnaryOp { child, kind } => {
-            writeln!(f, "{}", kind)?;
-            print_expr(f, p, child, indentation + 1)?;
-        }
-        Expr::Lit(ref atom) => {
-            writeln!(f, "{}", atom)?;
-        }
-        Expr::Field { left, ref ident } => {
-            writeln!(f, "getattr {}", ident)?;
-            print_expr(f, p, left, indentation + 1)?;
-        }
-        Expr::FuncCall { left, ref args } => {
-            writeln!(f, "call")?;
-            print_expr(f, p, left, indentation + 1)?;
-
-            indent(f, indentation + 1)?;
-            writeln!(f, "(")?;
-
-            for &arg in args.iter() {
-                print_expr(f, p, arg, indentation + 2)?;
-            }
-
-            indent(f, indentation + 1)?;
-            writeln!(f, ")")?;
-        }
-        Expr::Assignment { left, right } => {
-            writeln!(f, "assign")?;
-            print_expr(f, p, left, indentation + 1)?;
-            print_expr(f, p, right, indentation + 1)?;
-        }
-    }
-
-    Ok(())
-}
-
-#[derive(Debug)]
-pub enum Expr {
-    BinOp {
-        kind: BinOpKind,
-        left: ExprRef,
-        right: ExprRef,
-    },
-    UnaryOp {
-        kind: UnaryOpKind,
-        child: ExprRef,
-    },
-    Field {
-        left: ExprRef,
-        ident: String,
-    },
-    FuncCall {
-        left: ExprRef,
-        args: Box<[ExprRef]>,
-    },
-    Assignment {
-        left: ExprRef,
-        right: ExprRef,
-    },
-    Lit(Lit),
-}
-
-#[derive(Debug, PartialEq)]
-pub enum Lit {
-    Ident(String),
-    Bool(bool),
-    Int(i32),
-    Float(f32),
-}
-
-impl fmt::Display for Lit {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            Lit::Bool(true) => f.write_str("true"),
-            Lit::Bool(false) => f.write_str("false"),
-            Lit::Ident(ref ident) => f.write_str(ident),
-            Lit::Int(n) => write!(f, "{}", n),
-            Lit::Float(n) => write!(f, "{}", n),
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum BinOpKind {
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Rem,
-
-    Lt,
-    LtEq,
-    Gt,
-    GtEq,
-    Eq,
-    NotEq,
-
-    Index, // a[b]
-}
-
-impl fmt::Display for BinOpKind {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        use self::BinOpKind::*;
-        let s = match *self {
-            Add => "+",
-            Sub => "-",
-            Mul => "*",
-            Div => "/",
-            Rem => "%",
-
-            Lt => "<",
-            LtEq => "<=",
-            Gt => ">",
-            GtEq => ">=",
-            Eq => "==",
-            NotEq => "!=",
-
-            Index => "[]",
-        };
-        f.write_str(s)
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum UnaryOpKind {
-    Neg,
-}
-
-impl fmt::Display for UnaryOpKind {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let s = match *self {
-            UnaryOpKind::Neg => "-",
-        };
-        f.write_str(s)
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct ExprRef(u32);
-impl_entity!(ExprRef);
 
 
 
@@ -531,107 +369,6 @@ impl<'src> Parser<'src> {
     }
 
     pub fn fmt_stmt(&self, stmt: StmtRef) -> StmtFormatter {
-        StmtFormatter {
-            parser: self,
-            stmt
-        }
+        StmtFormatter::new(stmt, self)
     }
-}
-
-pub struct Ast<'a> {
-    pub root_block: StmtRef,
-    pub expressions: PrimaryMap<ExprRef, Expr>,
-    pub expr_locs: EntityMap<ExprRef, Span>,
-    pub statements: PrimaryMap<StmtRef, Stmt>,
-    pub stmt_locs: EntityMap<StmtRef, Span>,
-    pub src: &'a str,
-}
-
-pub struct StmtFormatter<'a, 'src: 'a> {
-    parser: &'a Parser<'src>,
-    stmt: StmtRef,
-}
-
-impl<'a, 'src: 'a> fmt::Display for StmtFormatter<'a, 'src> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        print_stmt(f, self.parser, self.stmt, 0)
-    }
-}
-
-fn print_stmt(f: &mut fmt::Formatter, p: &Parser, stmt: StmtRef, indentation: i32) -> fmt::Result {
-    match *p.get_stmt(stmt) {
-        Stmt::Let { ref name, ref ty, expr } => {
-            indent(f, indentation)?;
-            write!(f, "let {}", name)?;
-            if let &Some(ref ty) = ty {
-                write!(f, ": {}", ty)?;
-            }
-            if let Some(expr) = expr {
-                writeln!(f, " =")?;
-                print_expr(f, p, expr, indentation + 1)?;
-            } else {
-                writeln!(f)?;
-            }
-        }
-        Stmt::Block(Block { ref stmts }) => {
-            for &stmt in stmts {
-                print_stmt(f, p, stmt, indentation)?;
-            }
-        }
-        Stmt::Expr(expr) => print_expr(f, p, expr, indentation)?,
-        Stmt::If { cond, then, els } => {
-            indent(f, indentation)?;
-            writeln!(f, "if")?;
-            print_expr(f, p, cond, indentation + 1)?;
-            indent(f, indentation)?;
-            writeln!(f, "then")?;
-            print_stmt(f, p, then, indentation + 1)?;
-            if let Some(els) = els {
-                indent(f, indentation)?;
-                writeln!(f, "else")?;
-                print_stmt(f, p, els, indentation + 1)?;
-            }
-        }
-        Stmt::While { cond, block } => {
-            indent(f, indentation)?;
-            writeln!(f, "while")?;
-            print_expr(f, p, cond, indentation + 1)?;
-            print_stmt(f, p, block, indentation + 1)?;
-        }
-    }
-    Ok(())
-}
-
-pub enum Stmt {
-    Let {
-        name: String,
-        ty: Option<String>,
-        expr: Option<ExprRef>,
-    },
-    If {
-        cond: ExprRef,
-        then: StmtRef,
-        els: Option<StmtRef>,
-    },
-    While {
-        cond: ExprRef,
-        block: StmtRef,
-    },
-    Expr(ExprRef),
-    Block(Block),
-}
-
-pub struct Block {
-    stmts: Vec<StmtRef>,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct StmtRef(u32);
-impl_entity!(StmtRef);
-
-fn indent(f: &mut fmt::Formatter, n: i32) -> fmt::Result {
-    for _ in 0..n {
-        write!(f, "    ")?;
-    }
-    Ok(())
 }

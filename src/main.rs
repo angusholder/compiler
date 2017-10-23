@@ -5,6 +5,8 @@ mod result;
 mod entity;
 mod chars;
 
+mod ast;
+mod ast_printer;
 mod lexer;
 mod parser;
 
