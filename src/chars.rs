@@ -22,7 +22,6 @@ impl<'a> PeekableCharIndices<'a> {
         if let Some((index, ch)) = self.peeked.take() {
             Some((index, ch))
         } else if let Some(ch) = self.iter.next() {
-            self.peeked = Some((index, ch));
             Some((index, ch))
         } else {
             None
