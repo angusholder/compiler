@@ -1,8 +1,9 @@
 use ast::{ StmtRef, Stmt, ExprRef, Expr, Lit, UnaryOpKind, BinOpKind, Block, Ast };
 use ast_printer::{ ExprFormatter, StmtFormatter };
 use entity::{ PrimaryMap, EntityMap };
-use lexer::{ Lexer, Token, TokenKind };
+use lexer::Lexer;
 use result::{ Span, CompileResult };
+use tokens::{ TokenKind, Token };
 
 pub struct Parser<'src> {
     lexer: Lexer<'src>,
@@ -163,7 +164,7 @@ fn left_func_call(p: &mut Parser, _token: Token, left: ExprRef, _rbp: i32) -> Co
 
 impl<'a> Parser<'a> {
     fn parse_null(&mut self, token: Token) -> CompileResult<ExprRef> {
-        use lexer::TokenKind::*;
+        use tokens::TokenKind::*;
 
         let (nud, bp): (NullDenotation, i32) = match token.kind {
             Ident(_) | KTrue | KFalse | Int(_) | Float(_) => {
@@ -184,7 +185,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_left(&mut self, min_rbp: i32, node: &mut ExprRef) -> CompileResult<bool> {
-        use lexer::TokenKind::*;
+        use tokens::TokenKind::*;
 
         let (led, bp): (LeftDenotation, i32) = {
             let token = if let Some(token) = self.lexer.peek()? {

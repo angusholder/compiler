@@ -7,6 +7,7 @@ mod chars;
 
 mod ast;
 mod ast_printer;
+mod tokens;
 mod lexer;
 mod parser;
 mod type_checker;
